@@ -1,11 +1,11 @@
 {
-  "domain": "eparkai",
+  "domain": "eparkai_with_UI",
   "name": "eParkai.lt Solar Energy",
-  "documentation": "https://github.com/algirdasc/hass-eparkai",
+  "documentation": "https://github.com/worldas/hass-eparkai-UI",
   "dependencies": [],
   "config_flow": true,
-  "codeowners": ["@algirdasc"],
-  "issue_tracker": "https://github.com/algirdasc/hass-eparkai/issues",
+  "codeowners": ["@worldas"],
+  "issue_tracker": "https://github.com/worldas/hass-eparkai-UI/issues",
   "requirements": ["requests"],
   "version": "1.1.0"
 }
