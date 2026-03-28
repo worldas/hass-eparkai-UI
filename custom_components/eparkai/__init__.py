@@ -1,6 +1,7 @@
 import logging
 import random
 from datetime import timedelta, datetime
+
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
 from homeassistant.components.recorder import get_instance
@@ -12,22 +13,28 @@ from homeassistant.components.recorder.models import (
 from homeassistant.components.recorder.statistics import (
     async_add_external_statistics, statistics_during_period,
 )
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    CONF_ID, CONF_NAME, CONF_USERNAME, CONF_PASSWORD, CONF_CLIENT_ID, UnitOfEnergy, EVENT_HOMEASSISTANT_STARTED
+    CONF_ID, CONF_NAME, CONF_USERNAME, CONF_PASSWORD, CONF_CLIENT_ID,
+    UnitOfEnergy, EVENT_HOMEASSISTANT_STARTED,
 )
-from homeassistant.core import HomeAssistant, Event
-from homeassistant.helpers.event import async_track_time_interval, async_track_time_change
+from homeassistant.core import HomeAssistant, Event, ServiceCall
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
+
+from .const import (
+    DOMAIN,
+    CONF_POWER_PLANTS,
+    CONF_OBJECT_ADDRESS,
+    CONF_GENERATION_PERCENTAGE,
+    CONF_STATISTICS_ID_SUFFIX,
+)
 from .eparkai_client import EParkaiClient
 
 _LOGGER = logging.getLogger(__name__)
 
-DOMAIN = "eparkai"
-CONF_POWER_PLANTS = "power_plants"
-CONF_OBJECT_ADDRESS = "object_address"
-CONF_GENERATION_PERCENTAGE = "generation_percentage"
-CONF_STATISTICS_ID_SUFFIX = "statistics_id_suffix"
+SERVICE_IMPORT_GENERATION = "import_generation"
 
 POWER_PLANT_SCHEMA = vol.Schema({
     vol.Required(CONF_NAME): cv.string,
@@ -46,37 +53,66 @@ CONFIG_SCHEMA = vol.Schema({
     })
 }, extra=vol.ALLOW_EXTRA)
 
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Set up from YAML configuration."""
+    hass.data.setdefault(DOMAIN, {})
+
     if DOMAIN not in config:
         return True
-    hass.data.setdefault(DOMAIN, config[DOMAIN])
-    client = EParkaiClient(
-        username=config[DOMAIN][CONF_USERNAME],
-        password=config[DOMAIN][CONF_PASSWORD],
-        client_id=config[DOMAIN][CONF_CLIENT_ID]
+
+    # Import YAML config into a config entry
+    hass.async_create_task(
+        hass.config_entries.flow.async_init(
+            DOMAIN,
+            context={"source": "import"},
+            data=config[DOMAIN],
+        )
     )
+
+    return True
+
+
+async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Set up eParkai from a config entry."""
+    hass.data.setdefault(DOMAIN, {})
+
+    client = EParkaiClient(
+        username=entry.data[CONF_USERNAME],
+        password=entry.data[CONF_PASSWORD],
+        client_id=entry.data[CONF_CLIENT_ID],
+    )
+
     async def async_import_generation(now: datetime) -> None:
         if hass.is_stopping:
             _LOGGER.debug("HA is stopping, skipping generation import")
             return
+
+        power_plants = entry.options.get(CONF_POWER_PLANTS, [])
+        if not power_plants:
+            _LOGGER.warning("No power plants configured for eParkai")
+            return
+
         try:
             _LOGGER.info("Logging in to eParkai.lt (%s)", now)
             await hass.async_add_executor_job(client.login)
         except Exception as e:
             _LOGGER.error(f"eParkai login error: {e}")
             return
-        for power_plant in config[DOMAIN][CONF_POWER_PLANTS]:
+
+        for power_plant in power_plants:
             _LOGGER.info("Update requested [%s]", power_plant[CONF_NAME])
             try:
                 await hass.async_add_executor_job(
                     client.fetch_generation_data,
                     power_plant[CONF_ID],
-                    power_plant[CONF_OBJECT_ADDRESS],
+                    power_plant.get(CONF_OBJECT_ADDRESS) or None,
                     now
                 )
             except Exception as e:
                 _LOGGER.error(f"eParkai fetch generation data error [{power_plant[CONF_NAME]}]: {e}")
                 continue
+
             _LOGGER.info("Importing statistics [%s]", power_plant[CONF_NAME])
             await async_insert_statistics(
                 hass,
@@ -88,23 +124,62 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def async_first_start(event: Event) -> None:
         await async_import_generation(datetime.now())
 
-    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, async_first_start)
-    # async_track_time_change(hass, async_import_generation, hour=12, minute=random.randint(0, 59), second=0)
+    async def async_handle_import_service(call: ServiceCall) -> None:
+        _LOGGER.info("Manual import triggered via service call")
+        await async_import_generation(datetime.now())
 
-    async_track_time_interval(hass, async_import_generation, timedelta(hours=6, minutes=random.randint(0, 59)))
+    # Register service for manual import
+    hass.services.async_register(DOMAIN, SERVICE_IMPORT_GENERATION, async_handle_import_service)
+
+    # Schedule automatic imports
+    hass.bus.async_listen_once(EVENT_HOMEASSISTANT_STARTED, async_first_start)
+    cancel_interval = async_track_time_interval(
+        hass, async_import_generation, timedelta(hours=6, minutes=random.randint(0, 59))
+    )
+
+    # Listen for options updates (power plant changes)
+    entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        "client": client,
+        "cancel_interval": cancel_interval,
+    }
 
     return True
+
+
+async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """Handle options update."""
+    _LOGGER.info("eParkai configuration updated, reloading")
+    await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Unload a config entry."""
+    data = hass.data[DOMAIN].pop(entry.entry_id, None)
+    if data and "cancel_interval" in data:
+        data["cancel_interval"]()
+
+    # Remove service if no more entries
+    if not hass.data[DOMAIN]:
+        hass.services.async_remove(DOMAIN, SERVICE_IMPORT_GENERATION)
+
+    return True
+
 
 async def async_insert_statistics(
     hass: HomeAssistant, power_plant: dict, generation_data: dict
 ) -> None:
-    id_suffix = power_plant[CONF_STATISTICS_ID_SUFFIX] if CONF_STATISTICS_ID_SUFFIX in power_plant else ""
+    id_suffix = power_plant.get(CONF_STATISTICS_ID_SUFFIX, "")
     statistic_id = f"{DOMAIN}:energy_generation_{power_plant[CONF_ID]}_{id_suffix}".strip("_")
     _LOGGER.debug(f"Statistic ID for {power_plant[CONF_NAME]} is {statistic_id}")
+
     if not generation_data:
         _LOGGER.error(f"Received empty generation data for {statistic_id}")
         return None
+
     _LOGGER.debug(f"Received generation data for {statistic_id}: {generation_data}")
+
     metadata = StatisticMetaData(
         has_sum=True,
         mean_type=StatisticMeanType.NONE,
@@ -114,15 +189,19 @@ async def async_insert_statistics(
         unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         unit_class="energy",
     )
+
     _LOGGER.debug(f"Preparing long-term statistics for {statistic_id}")
     statistics = await _async_get_statistics(hass, metadata, power_plant, generation_data)
     _LOGGER.debug(f"Generated statistics for {statistic_id}: {statistics}")
     async_add_external_statistics(hass, metadata, statistics)
 
-async def _async_get_statistics(hass: HomeAssistant, metadata: StatisticMetaData, power_plant: dict, generation_data: dict) -> list[StatisticData]:
+
+async def _async_get_statistics(
+    hass: HomeAssistant, metadata: StatisticMetaData, power_plant: dict, generation_data: dict
+) -> list[StatisticData]:
     statistic_id = metadata["statistic_id"]
     statistics: list[StatisticData] = []
-    generation_percentage = power_plant[CONF_GENERATION_PERCENTAGE]
+    generation_percentage = power_plant.get(CONF_GENERATION_PERCENTAGE, 100)
     sum_ = None
     tz = dt_util.get_time_zone("Europe/Vilnius")
 
@@ -155,6 +234,7 @@ async def _async_get_statistics(hass: HomeAssistant, metadata: StatisticMetaData
             )
         )
     return statistics
+
 
 async def get_yesterday_sum(hass: HomeAssistant, metadata: StatisticMetaData, date: datetime) -> float:
     statistic_id = metadata["statistic_id"]
