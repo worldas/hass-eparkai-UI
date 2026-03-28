@@ -1,5 +1,6 @@
 import logging
 import random
+import re
 from datetime import timedelta, datetime
 
 import homeassistant.helpers.config_validation as cv
@@ -113,7 +114,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 _LOGGER.error(f"eParkai fetch generation data error [{power_plant[CONF_NAME]}]: {e}")
                 continue
 
-            _LOGGER.info("Importing statistics [%s]", power_plant[CONF_NAME])
+            _LOGGER.info("Importing statistics [%s] with id [%s]", power_plant[CONF_NAME], power_plant[CONF_ID])
             await async_insert_statistics(
                 hass,
                 power_plant,
@@ -171,7 +172,9 @@ async def async_insert_statistics(
     hass: HomeAssistant, power_plant: dict, generation_data: dict
 ) -> None:
     id_suffix = power_plant.get(CONF_STATISTICS_ID_SUFFIX, "")
-    statistic_id = f"{DOMAIN}:energy_generation_{power_plant[CONF_ID]}_{id_suffix}".strip("_").lower()
+    raw_id = f"{DOMAIN}:energy_generation_{power_plant[CONF_ID]}_{id_suffix}".strip("_").lower()
+    _LOGGER.debug(f"Statistic ID BEFORE cleanup for {power_plant[CONF_NAME]} is {raw_id}")
+    statistic_id = re.sub(r"[^a-z0-9_:]", "_", raw_id)
     _LOGGER.debug(f"Statistic ID for {power_plant[CONF_NAME]} is {statistic_id}")
 
     if not generation_data:
@@ -194,6 +197,7 @@ async def async_insert_statistics(
     statistics = await _async_get_statistics(hass, metadata, power_plant, generation_data)
     _LOGGER.debug(f"Generated statistics for {statistic_id}: {statistics}")
     async_add_external_statistics(hass, metadata, statistics)
+    return None
 
 
 async def _async_get_statistics(
