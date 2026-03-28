@@ -1,0 +1,64 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to eParkai.lt",
+        "description": "Enter your eParkai.lt credentials. The Client ID can be found in your profile URL on eparkai.lt.",
+        "data": {
+          "username": "Username (email)",
+          "password": "Password",
+          "client_id": "Client ID"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Invalid credentials or client ID. Please verify your login at eparkai.lt.",
+      "cannot_connect": "Could not connect to eParkai.lt. Please try again later."
+    },
+    "abort": {
+      "already_configured": "This client ID is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "eParkai Power Plants",
+        "menu_options": {
+          "list_plants": "View / remove power plants",
+          "add_plant": "Add a power plant"
+        }
+      },
+      "list_plants": {
+        "title": "Your Power Plants",
+        "description": "You have {plant_count} power plant(s) configured. Select one to remove it.",
+        "data": {
+          "plant_index": "Power plant"
+        }
+      },
+      "remove_plant": {
+        "title": "Remove Power Plant",
+        "description": "Are you sure you want to remove **{name}** (ID: {id})?",
+        "data": {
+          "confirm": "Yes, remove this power plant"
+        }
+      },
+      "add_plant": {
+        "title": "Add Power Plant",
+        "description": "Enter the power plant details. The plant ID can be found in the generation form on eparkai.lt.",
+        "data": {
+          "name": "Name",
+          "id": "Power plant ID",
+          "object_address": "Object address (optional)",
+          "statistics_id_suffix": "Statistics ID suffix (optional)",
+          "generation_percentage": "Generation percentage"
+        }
+      }
+    }
+  },
+  "services": {
+    "import_generation": {
+      "name": "Import generation data",
+      "description": "Manually trigger import of solar generation data from eParkai.lt."
+    }
+  }
+}

@@ -1,0 +1,5 @@
+DOMAIN = "eparkai"
+CONF_POWER_PLANTS = "power_plants"
+CONF_OBJECT_ADDRESS = "object_address"
+CONF_GENERATION_PERCENTAGE = "generation_percentage"
+CONF_STATISTICS_ID_SUFFIX = "statistics_id_suffix"
