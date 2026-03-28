@@ -171,7 +171,7 @@ async def async_insert_statistics(
     hass: HomeAssistant, power_plant: dict, generation_data: dict
 ) -> None:
     id_suffix = power_plant.get(CONF_STATISTICS_ID_SUFFIX, "")
-    statistic_id = f"{DOMAIN}:energy_generation_{power_plant[CONF_ID]}_{id_suffix}".strip("_")
+    statistic_id = f"{DOMAIN}:energy_generation_{power_plant[CONF_ID]}_{id_suffix}".strip("_").lower()
     _LOGGER.debug(f"Statistic ID for {power_plant[CONF_NAME]} is {statistic_id}")
 
     if not generation_data:
